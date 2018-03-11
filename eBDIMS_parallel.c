@@ -309,7 +309,6 @@ int main(int argc, char *argv[]) {
   double occupancy[N];                         //Occupancy from PDB file
   double phi;                                  //Angle for spherical coordinates
   double progressR;                            //Progress variable
-  double progressStart;                        //Start value of progress variable (progressR)
   double R0;                                   //Sum of initial distances
   double R;                                    //Sum of current distances
   double **R0Array;                            //Initial distances between particles
@@ -577,9 +576,7 @@ int main(int argc, char *argv[]) {
           }
         }
 
-        //Store first value of progressR as progressStart
         if ( step == 1 ){
-          progressStart = progressR;
           //Fill convTest with some large numbers
           for (int i = 0; i<convSize;++i){
             convTest[i] = progressR*(i+1);
@@ -591,6 +588,7 @@ int main(int argc, char *argv[]) {
           k = 0;
           acceptStep += 1;
 
+          //Check if simulation converged
           //Shift all elements in convTest to make space for the last progressR
           for (unsigned i = convSize; i-- > 1;){
             convTest[i] = convTest[i-1];
@@ -604,7 +602,7 @@ int main(int argc, char *argv[]) {
           }
 
           //Terminate simulation if progress variable converged (determined by CONVTOL)
-          if ( difftot < CONVTOL*convSize ){
+          if ( difftot < CONVTOL*(convSize-1) ){
             printf("\nProgress variable converged! Your simulation is done!\n");
             //Create empty end.flag file
             FILE *endflag;
