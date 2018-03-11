@@ -38,6 +38,7 @@
 #define C 40.0                                 //Constant for Kovacs mode
 #define CCART 6.0                              //Constant for mixed mode
 #define CSEQ 60.0                              //Constant for mixed mode
+#define CONVTOL 0.5                            //Tolerance for convergence of progressR
 #define DT 1.0E-15                             //Time step size
 #define EX 6.0                                 //Exponent in mixed mode
 #define INVMASS 6.947857E-11                   //Inverse of particle mass
@@ -298,6 +299,7 @@ int main(int argc, char *argv[]) {
   char *aminoa[N];                             //Amino acid type from PDB file
   double bfactor[N];                           //Temperature B factor from PDB file
   char *chain[N];                              //Chain letter from PDB file
+  double convTest[5];                          //Array to store recent progess for convergence test
   int d=0,i=0,j=0,k=0;                         //Iteration variables
   double fij;                                  //Force between particle i and j
   char filename[50];                           //Name of output file
@@ -343,6 +345,9 @@ int main(int argc, char *argv[]) {
     type[i] = malloc(strlen("CA") + 1);
     chain[i] = malloc(strlen("A") + 1);
   }
+
+  //Compute size of convTest for quicker calculations later
+  int convSize = sizeof(convTest)/sizeof(convTest[0]);
 
   //Use a random seed for the random number generator
   seedMT(time(NULL));
@@ -575,24 +580,40 @@ int main(int argc, char *argv[]) {
         //Store first value of progressR as progressStart
         if ( step == 1 ){
           progressStart = progressR;
-        }
-
-        //Terminate simulation if progress varialbe < 1% of start progress
-        if ( progressR < 0.001 * progressStart){
-          printf("\nReached >99.9%% of trajectory. Your simulation is done!\n");
-          //Create empty end.flag file
-          FILE *endflag;
-          sprintf(filename,"end.flag");
-          endflag = fopen(filename, "w");
-          fclose(endflag);
-
-          exit(0);
+          //Fill convTest with some large numbers
+          for (int i = 0; i<convSize;++i){
+            convTest[i] = progressR*(i+1);
+          }
         }
 
         //Accept simulation step
         if (progressR < targetR){
           k = 0;
           acceptStep += 1;
+
+          //Shift all elements in convTest to make space for the last progressR
+          for (unsigned i = convSize; i-- > 1;){
+            convTest[i] = convTest[i-1];
+          }
+          convTest[0] = progressR;
+
+          //Test convergence by taking difference between 5 last progressR
+          double difftot = 0;
+          for (int i=0; i < convSize-1; ++i){
+            difftot += convTest[i+1] - convTest[i];
+          }
+
+          //Terminate simulation if progress variable converged (determined by CONVTOL)
+          if ( difftot < CONVTOL*convSize ){
+            printf("\nProgress variable converged! Your simulation is done!\n");
+            //Create empty end.flag file
+            FILE *endflag;
+            sprintf(filename,"end.flag");
+            endflag = fopen(filename, "w");
+            fclose(endflag);
+
+            exit(0);
+          }
 
           //Generate output
           if ( acceptStep % 500 == 0 ){
