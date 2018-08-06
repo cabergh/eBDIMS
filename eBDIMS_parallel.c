@@ -38,7 +38,7 @@
 #define C 40.0                                 //Constant for Kovacs mode
 #define CCART 6.0                              //Constant for mixed mode
 #define CSEQ 60.0                              //Constant for mixed mode
-#define CONVTOL 0.5                            //Tolerance for convergence of progressR
+#define CONVTOL 0.0                            //Tolerance for convergence of progressR
 #define DT 1.0E-15                             //Time step size
 #define EX 6.0                                 //Exponent in mixed mode
 #define INVMASS 6.947857E-11                   //Inverse of particle mass
@@ -564,30 +564,32 @@ int main(int argc, char *argv[]) {
     test_time = omp_get_wtime();
     if ( test_time - start_time < TIME_LIMIT ){
 
-      //Only use biasing every # unbiased steps
-      if ( step % unbiasedStep == 0 ){
 
-        #pragma omp parallel for private(i, d, Rtest) reduction(+:progressR)
-        //Calculate the progress variable that will be tested
-        for (int i = 0; i < N; ++i){
-          for (int d = (i+1); d < N; ++d){
-            Rtest = dist(rx[i],rx[d],ry[i],ry[d],rz[i],rz[d]);
-            progressR += (Rtest - Rt[i][d])*(Rtest - Rt[i][d]);
+      #pragma omp parallel for private(i, d, Rtest) reduction(+:progressR)
+      //Calculate the progress variable that will be tested
+      for (int i = 0; i < N; ++i){
+        for (int d = (i+1); d < N; ++d){
+          Rtest = dist(rx[i],rx[d],ry[i],ry[d],rz[i],rz[d]);
+          progressR += (Rtest - Rt[i][d])*(Rtest - Rt[i][d]);
           }
+      }
+
+      if ( step == 1 ){
+        //Fill convTest with some large numbers
+        for (int i = 0; i<convSize;++i){
+          convTest[i] = progressR*(i+1);
         }
+      }
 
-        if ( step == 1 ){
-          //Fill convTest with some large numbers
-          for (int i = 0; i<convSize;++i){
-            convTest[i] = progressR*(i+1);
-          }
-        }
+      //Accept simulation step if target is approached or the step is unbiased
+      if (progressR < targetR || step % unbiasedStep != 0){
+        k = 0;
+        acceptStep += 1;
+        printf("DEBUG:  progressR = %lf\n",progressR);
 
-        //Accept simulation step
-        if (progressR < targetR){
-          k = 0;
-          acceptStep += 1;
-
+        //The convergence is only smooth when unbiasedStep is 1 so we can
+        //only check for convergence when this is the case.
+        if (unbiasedStep == 1){
           //Check if simulation converged
           //Shift all elements in convTest to make space for the last progressR
           for (unsigned i = convSize; i-- > 1;){
@@ -596,6 +598,7 @@ int main(int argc, char *argv[]) {
           convTest[0] = progressR;
 
           //Test convergence by taking difference between 5 last progressR
+          //This only works for smooth sampling
           double difftot = 0;
           for (int i=0; i < convSize-1; ++i){
             difftot += convTest[i+1] - convTest[i];
@@ -612,63 +615,63 @@ int main(int argc, char *argv[]) {
 
             exit(0);
           }
-
-          //Generate output
-          if ( acceptStep % 500 == 0 ){
-            FILE *outfile;
-            sprintf(filename,"DIMS_MD%07d.pdb", acceptStep);
-            outfile = fopen(filename, "w");
-            for (int i = 0; i < N; ++i){
-
-              //Separate chains for proper visualization of multi-chain structures
-              if ( i > 0 && strcmp(chain[i],chain[i-1]) != 0){
-                k = 0;
-              }
-
-              //Print to file
-              fprintf(outfile, "%s%7d%4s%5s%2s%4d%12.3f%8.3f%8.3f%6.2f%6.2f%12s\n", "ATOM", (i+1), type[i], aminoa[i], chain[i], (k+1), rx[i], ry[i], rz[i], occupancy[i], bfactor[i], "C");
-              ++k;
-            }
-            fclose(outfile);
-            printf("Wrote file %s\n",filename);
-          }
-
-          #pragma omp parallel for private(i)
-          for (int i = 0; i < N; ++i){
-            rxbefore[i] = rx[i];
-            rybefore[i] = ry[i];
-            rzbefore[i] = rz[i];
-            vxbefore[i] = vx[i];
-            vybefore[i] = vy[i];
-            vzbefore[i] = vz[i];
-          }
-
-          targetR = progressR;
         }
 
-        //Reject simulation step
-        else{
-          #pragma omp parallel for private(i, theta, phi)
+        //Generate output
+        if ( acceptStep % 500 == 0 ){
+          FILE *outfile;
+          sprintf(filename,"DIMS_MD%07d.pdb", acceptStep);
+          outfile = fopen(filename, "w");
           for (int i = 0; i < N; ++i){
-            rx[i] = rxbefore[i];
-            ry[i] = rybefore[i];
-            rz[i] = rzbefore[i];
 
-            //Generate new Maxwell-Boltzmann distributed velocities
-            #pragma omp critical (random)
-            {
-            ranvel(boltzSigma, &V1[i]);
-
-            //Direction of velocity
-            theta = PI*((double)randomMT()/(double)(MAX_RAND));
-            phi = 2*PI*((double)randomMT()/(double)(MAX_RAND));
+            //Separate chains for proper visualization of multi-chain structures
+            if ( i > 0 && strcmp(chain[i],chain[i-1]) != 0){
+              k = 0;
             }
-            //Assign new velocities to particles
-            vx[i] = fabs(V1[i])*sin(theta)*cos(phi)*POW;
-            vy[i] = fabs(V1[i])*sin(theta)*sin(phi)*POW;
-            vz[i] = fabs(V1[i])*cos(theta)*POW;
 
+            //Print to file
+            fprintf(outfile, "%s%7d%4s%5s%2s%4d%12.3f%8.3f%8.3f%6.2f%6.2f%12s\n", "ATOM", (i+1), type[i], aminoa[i], chain[i], (k+1), rx[i], ry[i], rz[i], occupancy[i], bfactor[i], "C");
+            ++k;
           }
+          fclose(outfile);
+          printf("Wrote file %s\n",filename);
+        }
+
+        #pragma omp parallel for private(i)
+        for (int i = 0; i < N; ++i){
+          rxbefore[i] = rx[i];
+          rybefore[i] = ry[i];
+          rzbefore[i] = rz[i];
+          vxbefore[i] = vx[i];
+          vybefore[i] = vy[i];
+          vzbefore[i] = vz[i];
+        }
+
+        targetR = progressR;
+      }
+
+      //Reject simulation step
+      else{
+        #pragma omp parallel for private(i, theta, phi)
+        for (int i = 0; i < N; ++i){
+          rx[i] = rxbefore[i];
+          ry[i] = rybefore[i];
+          rz[i] = rzbefore[i];
+
+          //Generate new Maxwell-Boltzmann distributed velocities
+          #pragma omp critical (random)
+          {
+          ranvel(boltzSigma, &V1[i]);
+
+          //Direction of velocity
+          theta = PI*((double)randomMT()/(double)(MAX_RAND));
+          phi = 2*PI*((double)randomMT()/(double)(MAX_RAND));
+          }
+          //Assign new velocities to particles
+          vx[i] = fabs(V1[i])*sin(theta)*cos(phi)*POW;
+          vy[i] = fabs(V1[i])*sin(theta)*sin(phi)*POW;
+          vz[i] = fabs(V1[i])*cos(theta)*POW;
+
         }
       }
     }
